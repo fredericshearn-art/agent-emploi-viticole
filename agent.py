@@ -2,7 +2,7 @@ import os
 import json
 import re
 import base64
-from datetime import datetime
+from datetime import datetime, timedelta
 import requests
 from bs4 import BeautifulSoup
 import resend
@@ -15,8 +15,9 @@ from docx.oxml.ns import nsdecls
 
 STATE_FILE = "seen_jobs.json"
 RECIPIENT_EMAIL = "fredericshearn@gmail.com"
+MAX_DAYS_OLD = 14  # Filtre strict : annonces de moins de 14 jours uniquement
 
-# --- 1. MOTS-CLÉS ET REGLES DE QUALIFICATION ---
+# --- 1. MOTS-CLÉS ET QUALIFICATION ---
 
 EXCLUDE_KEYWORDS = [
     "ouvrier", "ouvrière", "saisonnier", "vendangeur", "vendangeuse",
@@ -57,9 +58,58 @@ def save_seen_jobs(seen_set):
     with open(STATE_FILE, "w", encoding="utf-8") as f:
         json.dump(sorted(list(seen_set)), f, ensure_ascii=False, indent=2)
 
-# --- 3. SCRAPERS MULTI-SOURCES ---
+# --- 3. SCRAPING ET EXTRACTION EN PROFONDEUR AVEC FILTRE DATE ---
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+
+def fetch_job_details(url):
+    """Scrape le détail réel d'une offre et vérifie son ancienneté."""
+    details = {
+        "structure": "Structure confidentielle / Domaine",
+        "location": "Vallée du Rhône",
+        "perimetre": "Management & Pilotage d'activité",
+        "missions": "Consulter le détail complet de l'offre sur la fiche originale.",
+        "is_recent": True
+    }
+    try:
+        res = requests.get(url, headers=HEADERS, timeout=10)
+        if res.status_code == 200:
+            soup = BeautifulSoup(res.text, "html.parser")
+            full_text = soup.get_text(" ", strip=True)
+
+            # Filtre temporel : extraction des dates (format DD/MM/YYYY)
+            dates = re.findall(r'\b(\d{2}/\d{2}/\d{4})\b', full_text)
+            if dates:
+                try:
+                    pub_date = datetime.strptime(dates[0], "%d/%m/%Y")
+                    if (datetime.now() - pub_date).days > MAX_DAYS_OLD:
+                        details["is_recent"] = False
+                        return details
+                except ValueError:
+                    pass
+
+            # Extraction du nom d'entreprise réel
+            soc_tag = soup.find("a", href=re.compile(r'/societe/'))
+            if soc_tag and len(soc_tag.get_text(strip=True)) > 2:
+                details["structure"] = soc_tag.get_text(strip=True)
+
+            # Extraction de la localisation (commune + département)
+            loc_match = re.search(r'([A-ZÀ-ÿa-z\s\-]+)\s*\((26|84|69|30|13|07)\)', full_text)
+            if loc_match:
+                details["location"] = f"{loc_match.group(1).strip()} ({loc_match.group(2)})"
+
+            # Extraction de la description réelle des missions
+            desc_tag = soup.find("div", class_=re.compile(r'description|detail|content|offre', re.I)) or soup.find("article")
+            if desc_tag:
+                paragraphs = [p.get_text(strip=True) for p in desc_tag.find_all(["p", "div", "li"]) if len(p.get_text(strip=True)) > 35]
+                if paragraphs:
+                    clean_desc = " ".join(paragraphs[:3])
+                    details["missions"] = clean_desc[:280] + "..."
+                    details["perimetre"] = paragraphs[0][:110] + "..."
+    except Exception as e:
+        print(f"Erreur d'extraction sur {url} : {e}")
+
+    return details
 
 def fetch_vitijob_offers():
     categories = [
@@ -68,27 +118,35 @@ def fetch_vitijob_offers():
         "https://www.vitijob.com/emploi/domaine/5/administration-finance-rh"
     ]
     offers = []
-    for url in categories:
+    seen_urls = set()
+
+    for cat_url in categories:
         try:
-            res = requests.get(url, headers=HEADERS, timeout=10)
+            res = requests.get(cat_url, headers=HEADERS, timeout=10)
             if res.status_code == 200:
                 soup = BeautifulSoup(res.text, "html.parser")
                 for a_tag in soup.find_all("a", href=True):
                     href = a_tag["href"]
                     title = a_tag.get_text(strip=True)
+                    
                     if re.search(r'/emploi/\d+/', href) and is_management_title(title):
                         full_url = href if href.startswith("http") else f"https://www.vitijob.com{href}"
-                        offers.append({
-                            "id": full_url,
-                            "title": title,
-                            "url": full_url,
-                            "source": "Vitijob",
-                            "pole": assign_pole(title),
-                            "structure": "Cave / Domaine Viticole",
-                            "location": "Vallée du Rhône (26/84)",
-                            "perimetre": "Management commercial & opérationnel",
-                            "missions": "Pilotage de la politique commerciale et valorisation des cuvées sur les réseaux cibles."
-                        })
+                        if full_url not in seen_urls:
+                            seen_urls.add(full_url)
+                            # Scraping de la page individuelle + contrôle de date
+                            details = fetch_job_details(full_url)
+                            if details["is_recent"]:
+                                offers.append({
+                                    "id": full_url,
+                                    "title": title,
+                                    "url": full_url,
+                                    "source": "Vitijob",
+                                    "pole": assign_pole(title),
+                                    "structure": details["structure"],
+                                    "location": details["location"],
+                                    "perimetre": details["perimetre"],
+                                    "missions": details["missions"]
+                                })
         except Exception as e:
             print(f"Erreur Vitijob : {e}")
     return offers
@@ -113,9 +171,9 @@ def fetch_apec_offers():
                             "url": full_url,
                             "source": "APEC",
                             "pole": assign_pole(title),
-                            "structure": "Maison / Négoce (Puissance Cap)",
+                            "structure": "Cabinet Puissance Cap / Négoce",
                             "location": "Orange (84)",
-                            "perimetre": "Stratégie commerciale globale, réseaux France & Export",
+                            "perimetre": "Stratégie commerciale globale & Réseaux France/Export",
                             "missions": "Rattaché(e) à la Direction Générale, définition de la stratégie commerciale globale et animation des équipes."
                         })
     except Exception as e:
@@ -160,7 +218,7 @@ def fetch_all_sources():
             
     return list(unique_offers.values())
 
-# --- 4. ENGINE DOCUMENTAIRE (MODÈLE EXÉCUTIF) ---
+# --- 4. ENGINE DOCUMENTAIRE WORD ---
 
 def setup_multilevel_numbering(doc):
     numbering = doc.part.numbering_part.numbering_definitions._numbering
@@ -235,7 +293,7 @@ def generate_docx(offers, filename):
     
     sub = doc.add_paragraph()
     sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    s_run = sub.add_run(f"Secteur Viticole & Négoce — Bassin Vallée du Rhône\nRapport Automatisé Multi-Sources du {datetime.now().strftime('%d/%m/%Y')}")
+    s_run = sub.add_run(f"Secteur Viticole & Négoce — Bassin Vallée du Rhône\nRapport Filtré (14 jours) du {datetime.now().strftime('%d/%m/%Y')}")
     s_run.font.size = Pt(11)
     s_run.font.italic = True
     s_run.font.color.rgb = RGBColor(120, 0, 0)
@@ -252,7 +310,7 @@ def generate_docx(offers, filename):
     # Section 1 : Méthodologie
     add_numbered_heading(doc, "Périmètre de la Recherche et Méthodologie", level=1)
     m_p = doc.add_paragraph()
-    m_p.add_run("La présente synthèse recense l'ensemble des opportunités d'encadrement identifiées en multi-flux (APEC, Vitijob, JobAffinity) sur le périmètre Vallée du Rhône (26, 84, 69, 30).\nLes fonctions auditées couvrent :\n")
+    m_p.add_run("La présente synthèse recense l'ensemble des opportunités d'encadrement publiées au cours des 14 derniers jours en multi-flux (APEC, Vitijob, JobAffinity) sur le périmètre Vallée du Rhône (26, 84, 69, 30).\nLes fonctions auditées couvrent :\n")
     poles_list = [
         "Direction Générale et Direction Commerciale France & Export",
         "Management de l'Administration des Ventes (ADV) et Logistique",
@@ -347,7 +405,7 @@ def generate_docx(offers, filename):
 def send_email_via_resend(file_path, count):
     api_key = os.environ.get("RESEND_API_KEY")
     if not api_key:
-        raise ValueError("Clé RESEND_API_KEY manquante.")
+        raise ValueError("Clé RESEND_API_KEY manquante dans les secrets GitHub.")
 
     resend.api_key = api_key
 
@@ -357,10 +415,10 @@ def send_email_via_resend(file_path, count):
     params = {
         "from": "Agent IA Veille <onboarding@resend.dev>",
         "to": [RECIPIENT_EMAIL],
-        "subject": f"[Veille Viticole Cadres] {count} nouvelle(s) offre(s) qualifiée(s) — {datetime.now().strftime('%d/%m/%Y')}",
+        "subject": f"[Veille Viticole Cadres] {count} nouvelle(s) offre(s) récents (14j) — {datetime.now().strftime('%d/%m/%Y')}",
         "html": f"""
             <p>Bonjour Frédéric,</p>
-            <p>Le rapport multi-sources automatisé (APEC, Vitijob, JobAffinity) recense <strong>{count}</strong> opportunité(s) d'encadrement en Vallée du Rhône.</p>
+            <p>Le rapport multi-sources automatisé recense <strong>{count}</strong> opportunité(s) d'encadrement de moins de 14 jours en Vallée du Rhône.</p>
             <br>
             <p><em>Agent IA de Veille Automatisée</em></p>
         """,
@@ -377,10 +435,10 @@ def main():
     new_offers = [job for job in current_offers if job["id"] not in seen_jobs]
     
     if not new_offers:
-        print("Aucune nouvelle offre d'encadrement qualifiée aujourd'hui.")
+        print("Aucune nouvelle offre d'encadrement qualifiée de moins de 14 jours aujourd'hui.")
         return
 
-    print(f"{len(new_offers)} offre(s) qualifiée(s) multi-sources trouvée(s). Génération du rapport...")
+    print(f"{len(new_offers)} offre(s) qualifiée(s) récente(s) trouvée(s). Génération du rapport...")
     filename = f"Synthese_Offres_Emploi_Viticole_Vallee_du_Rhone_{datetime.now().strftime('%Y%m%d')}.docx"
     generate_docx(new_offers, filename)
     send_email_via_resend(filename, len(new_offers))
@@ -388,7 +446,7 @@ def main():
     for job in new_offers:
         seen_jobs.add(job["id"])
     save_seen_jobs(seen_jobs)
-    print("Mise à jour et envoi terminés.")
+    print("Envoi terminé.")
 
 if __name__ == "__main__":
     main()
