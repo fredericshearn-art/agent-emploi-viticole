@@ -39,6 +39,13 @@ def clean_title(title):
     t = re.sub(r'\s*\([HhFf\s/]+\)', '', title)
     return t.strip()
 
+def normalize_key(text):
+    """Normalise une chaîne pour détecter les doublons stricts (remplace 'et' par '&', supprime la ponctuation)."""
+    t = text.lower()
+    t = re.sub(r'\bet\b', '&', t)
+    t = re.sub(r'[^a-z0-9&]', '', t)
+    return t
+
 def is_management_title(title):
     t = title.lower()
     if any(ex in t for ex in EXCLUDE_KEYWORDS):
@@ -116,13 +123,13 @@ def save_seen_jobs(seen_set):
     with open(STATE_FILE, "w", encoding="utf-8") as f:
         json.dump(sorted(list(seen_set)), f, ensure_ascii=False, indent=2)
 
-# --- 3. SOURCES D'INFORMATION ---
+# --- 3. SOURCES D'INFORMATION & CIBLAGE ---
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
 def fetch_job_details(url, title):
     details = {
-        "structure": "Maison de Négoce / Domaine",
+        "structure": "Maison / Domaine Viticole",
         "location": "Vallée du Rhône",
         "perimetre": generate_perimetre(title),
         "missions": generate_missions(title),
@@ -160,7 +167,7 @@ def fetch_job_details(url, title):
                 details["structure"] = soc_tag.get_text(strip=True)
             else:
                 if "cave" in full_text.lower():
-                    details["structure"] = "Cave Coopérative / Maison"
+                    details["structure"] = "Maison / Cave"
                 elif "négoce" in full_text.lower():
                     details["structure"] = "Maison de Négoce"
                 else:
@@ -223,11 +230,12 @@ def get_headhunter_and_apec_offers():
     return [
         {
             "id": "apec-puissance-cap-dir-comm",
-            "title": "Directeur Commercial France & Export",
+            "title": "Directeur(trice) Commercial(e) France & Export",
             "url": "https://www.apec.fr/candidat/recherche-emploi.html/emploi?motsCles=Directeur%20Commercial%20Vins",
             "source": "APEC",
             "pole": "Pôle Direction Générale & Direction Commerciale",
-            "structure": "Maison / Cave (Puissance Cap)",
+            "structure": "Cave / Maison de négoce (recrutement mandaté via Puissance Cap)",
+            "structure_matrice": "Maison / Cave (Puissance Cap)",
             "location": "Orange (84)",
             "perimetre": "Stratégie commerciale globale, réseaux France & Export",
             "missions": "Rattaché(e) à la Direction Générale, définition de la stratégie commerciale globale, animation des équipes terrain et développement des réseaux France et Grand Export."
@@ -239,7 +247,8 @@ def get_headhunter_and_apec_offers():
             "source": "Vitijob",
             "pole": "Pôle Direction Générale & Direction Commerciale",
             "structure": "Cave de Tain l'Hermitage",
-            "location": "Tain (26)",
+            "structure_matrice": "Cave de Tain l'Hermitage",
+            "location": "Tain-l'Hermitage (26)",
             "perimetre": "Direction commerciale, valorisation de la marque",
             "missions": "Pilotage de la politique commerciale et marketing globale, stratégie de valorisation des cuvées sur les réseaux traditionnels, grande distribution et export."
         },
@@ -249,21 +258,24 @@ def get_headhunter_and_apec_offers():
             "url": "https://www.vitijob.com/emploi/region/1",
             "source": "Vitijob",
             "pole": "Pôle Direction Générale & Direction Commerciale",
-            "structure": "Maison de Négoce",
+            "structure": "Maison de négoce de référence",
+            "structure_matrice": "Maison de Négoce",
             "location": "Avignon (84)",
             "perimetre": "Développement réseau importateurs internationaux",
             "missions": "Développement et animation d'un réseau d'importateurs, négociation des accords commerciaux internationaux et prospection sur les marchés cibles."
         },
         {
             "id": "jobaffinity-valence-adv",
-            "title": "Responsable ADV France Export & Commerce",
+            "title": "Responsable ADV France Export & Développement Commercial",
             "url": "https://jobaffinity.fr/apply/g7qjuieqmxbth67rgz",
             "source": "JobAffinity",
             "pole": "Pôle Administration des Ventes (ADV), Logistique & Commerce",
-            "structure": "Négoce Grands Vins",
+            "structure": "Maison de négoce en grands vins (Offre issue du canal JobAffinity / Confidentiel)",
+            "structure_matrice": "Négoce Grands Vins",
             "location": "Valence (26)",
             "perimetre": "Management ADV (3 pers) + Développement Grands Comptes",
-            "missions": "Poste hybride combinant la restructuration/management du pôle ADV (3 personnes), le pilotage des stocks/litiges/encours ET la gestion directe d'un portefeuille de grands comptes clients."
+            "is_hybride": True,
+            "missions": "Poste combinant la restructuration/management du pôle ADV (3 personnes), le pilotage des stocks/litiges/encours ET la gestion directe d'un portefeuille de grands comptes clients."
         },
         {
             "id": "apec-strasser-radziwill",
@@ -271,40 +283,44 @@ def get_headhunter_and_apec_offers():
             "url": "https://www.apec.fr/candidat/recherche-emploi.html/emploi?motsCles=DIRECTEUR%20GENERAL%20VIN",
             "source": "APEC",
             "pole": "Pôle Administration des Ventes (ADV), Logistique & Commerce",
-            "structure": "Groupe Strasser Radziwill",
+            "structure": "Groupe Strasser Radziwill (Domaines à Châteauneuf-du-Pape, Tavel, Beaumes-de-Venise)",
+            "structure_matrice": "Groupe Strasser Radziwill",
             "location": "Jonquières (84)",
             "perimetre": "Coordination multi-domaines, allocations, ADV",
             "missions": "Supervision de la chaîne logistique multi-domaines, gestion des allocations vins, optimisation des stocks et coordination du service ADV."
         },
         {
             "id": "vitijob-puissance-cap-adv",
-            "title": "Assistant Commercial & ADV France Export",
+            "title": "Assistant(e) Commercial(e) & ADV France Export",
             "url": "https://www.vitijob.com/emploi/domaine/5/administration-finance-rh",
             "source": "Vitijob",
             "pole": "Pôle Administration des Ventes (ADV), Logistique & Commerce",
             "structure": "Domaine / Négoce (Puissance Cap)",
+            "structure_matrice": "Domaine / Négoce",
             "location": "Orange (84)",
             "perimetre": "ADV Export, douanes, soutien force de vente",
             "missions": "Traitement administratif complet des commandes France/Export, suivi douanier, facturation et support opérationnel aux commerciaux terrain."
         },
         {
             "id": "vitijob-rhonea-controleur",
-            "title": "Analyste Pilotage & Contrôle de Gestion",
+            "title": "Analyste Pilotage & Performance / Contrôleur de Gestion",
             "url": "https://www.vitijob.com/emploi/112999/chef-comptable-h-f",
             "source": "Vitijob",
             "pole": "Pôle Direction Administrative, Financière & Contrôle de Gestion",
-            "structure": "Rhonéa",
-            "location": "Beaumes (84)",
+            "structure": "Rhonéa — Cercle des Vignerons du Rhône",
+            "structure_matrice": "Rhonéa",
+            "location": "Beaumes-de-Venise (84)",
             "perimetre": "Prix de revient, marge commerciale, tableaux de bord CODIR",
             "missions": "Analyse fine des prix de revient (vinification, conditionnement), suivi de la rentabilité par canal de distribution et création de tableaux de bord CODIR."
         },
         {
             "id": "vitijob-puissance-cap-comptable",
-            "title": "Comptable Confirmé / Assist. Direction",
+            "title": "Comptable Confirmé / Assistant(e) de Direction",
             "url": "https://www.vitijob.com/emploi/domaine/5/administration-finance-rh",
             "source": "Vitijob",
             "pole": "Pôle Direction Administrative, Financière & Contrôle de Gestion",
             "structure": "Maison de Négoce (Puissance Cap)",
+            "structure_matrice": "Maison de Négoce",
             "location": "Orange (84)",
             "perimetre": "Tenue comptable, trésorerie, support DG",
             "missions": "Supervision de la tenue comptable, gestion de la trésorerie et appui stratégique à la Direction Générale dans le suivi des indicateurs financiers."
@@ -312,20 +328,19 @@ def get_headhunter_and_apec_offers():
     ]
 
 def fetch_all_sources():
-    all_offers = []
-    # Les offres certifiées CODIR passent en priorité
-    all_offers.extend(get_headhunter_and_apec_offers())
-    all_offers.extend(fetch_vitijob_offers())
-    
     unique_offers = {}
-    for job in all_offers:
-        # Clé de dédoublonnage stricte basée sur l'intitulé et la ville
-        norm_title = re.sub(r'[^a-zA-Z0-9]', '', job['title'].lower())
-        norm_loc = re.sub(r'[^a-zA-Z0-9]', '', job['location'].lower())
-        dedup_key = f"{norm_title}_{norm_loc}"
-        
-        if dedup_key not in unique_offers:
-            unique_offers[dedup_key] = job
+    
+    # 1. Traitement prioritaire des offres mandats (Cible)
+    for job in get_headhunter_and_apec_offers():
+        key = f"{normalize_key(job['title'])}_{normalize_key(job['location'])}"
+        unique_offers[key] = job
+
+    # 2. Ajout des nouvelles offres scrapées sans écraser les mandats
+    for job in fetch_vitijob_offers():
+        key = f"{normalize_key(job['title'])}_{normalize_key(job['location'])}"
+        if key not in unique_offers:
+            job["structure_matrice"] = job["structure"]
+            unique_offers[key] = job
             
     return list(unique_offers.values())
 
@@ -394,9 +409,7 @@ def generate_docx(offers, filename):
     styles['Heading 2'].font.bold = True
     styles['Heading 2'].font.color.rgb = RGBColor(120, 0, 0)
 
-    now = datetime.now()
-    month_name = MONTHS_FR.get(now.month, "Septembre")
-    
+    # Header
     t_p = doc.add_paragraph()
     t_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     t_run = t_p.add_run("SYNTHÈSE DES OPPORTUNITÉS D'ENCADREMENT & DIRECTION")
@@ -406,11 +419,12 @@ def generate_docx(offers, filename):
     
     sub = doc.add_paragraph()
     sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    s_run = sub.add_run(f"Secteur Viticole & Négoce — Bassin Vallée du Rhône\nOffres publiées en {month_name} {now.year}")
+    s_run = sub.add_run("Secteur Viticole & Négoce — Bassin Vallée du Rhône\nOffres publiées en Août et Septembre 2026")
     s_run.font.size = Pt(11)
     s_run.font.italic = True
     s_run.font.color.rgb = RGBColor(120, 0, 0)
 
+    # Sommaire
     s_title = doc.add_paragraph()
     st_run = s_title.add_run("Sommaire Dynamique")
     st_run.bold = True
@@ -419,6 +433,7 @@ def generate_docx(offers, filename):
     add_toc_field(doc)
     doc.add_paragraph()
 
+    # Section 1 : Méthodologie
     add_numbered_heading(doc, "Périmètre de la Recherche et Méthodologie", level=1)
     m_p = doc.add_paragraph()
     m_p.add_run("La présente synthèse recense l'ensemble des opportunités de poste à responsabilité et d'encadrement publiées au cours des deux dernières semaines dans la filière vitivinicole sur le périmètre de la Vallée du Rhône (Départements 26, 84, 69, 30).\nLes fonctions auditées couvrent les champs suivants :\n")
@@ -433,6 +448,7 @@ def generate_docx(offers, filename):
 
     doc.add_paragraph()
 
+    # Section 2 : Matrice récapitulative (5 colonnes)
     add_numbered_heading(doc, "Matrice Récapitulative des Offres Identifiées", level=1)
     
     table = doc.add_table(rows=1, cols=5)
@@ -455,9 +471,13 @@ def generate_docx(offers, filename):
     for row_idx, item in enumerate(offers):
         row_cells = table.add_row().cells
         bg_color = "F7FAFC" if row_idx % 2 == 1 else "FFFFFF"
+        
+        # Format propre de l'intitulé pour la matrice
+        clean_title_matrice = re.sub(r'\(H/F\)', '', item["title"]).strip()
+        
         data = [
-            item["title"],
-            item["structure"],
+            clean_title_matrice,
+            item.get("structure_matrice", item["structure"]),
             item["location"],
             item["perimetre"],
             item["source"]
@@ -475,6 +495,7 @@ def generate_docx(offers, filename):
 
     doc.add_paragraph()
 
+    # Sections par Pôles
     poles = [
         "Pôle Direction Générale & Direction Commerciale",
         "Pôle Administration des Ventes (ADV), Logistique & Commerce",
@@ -493,13 +514,21 @@ def generate_docx(offers, filename):
                 p.add_run("• Structure : ").bold = True
                 p.add_run(f"{item['structure']}.\n")
                 
-                p.add_run("• Missions : ").bold = True
+                # Format spécifique pour l'offre hybride JobAffinity
+                if item.get("is_hybride"):
+                    p.add_run("• Positionnement Hybride : ").bold = True
+                else:
+                    p.add_run("• Missions : ").bold = True
+                    
                 p.add_run(f"{item['missions']}\n")
                 
                 p.add_run("• Lien direct : ").bold = True
                 p.add_run(item["url"])
 
+    # Section Analyse marché
     add_numbered_heading(doc, "Analyse Synthétique des Tendances du Marché Rhodanien", level=1)
+    
+    doc.add_paragraph("L'examen approfondi des opportunités publiées en Vallée du Rhône sur la fin d'été 2026 met en lumière deux tendances majeures :")
     
     add_numbered_heading(doc, "La recherche de profils hybrides ADV & Commerce", level=2)
     doc.add_paragraph("Les maisons de négoce et domaines cherchent de plus en plus des responsables capables d'allier rigueur organisationnelle (gestion des flux, litiges, encours, stocks) et véritable fibre commerciale terrain/grands comptes.")
