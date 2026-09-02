@@ -53,22 +53,23 @@ def save_seen_jobs(seen_set):
 # --- 3. SCRAPING AVANCÉ DES OFFRES ---
 
 def fetch_job_details(url, headers):
-    """Scrape le détail d'une offre d'emploi ciblée."""
-    details = {"structure": "Non spécifiée", "location": "Vallée du Rhône", "missions": "Consulter l'annonce pour le détail des missions."}
+    details = {
+        "structure": "Non spécifiée",
+        "location": "Vallée du Rhône",
+        "missions": "Consulter l'annonce pour le détail des missions."
+    }
     try:
         res = requests.get(url, headers=headers, timeout=10)
         if res.status_code == 200:
             soup = BeautifulSoup(res.text, "html.parser")
             
-            # Recherche de la structure et localisation
             info_block = soup.find("div", class_="info-job") or soup.find("section", class_="content")
             if info_block:
                 text = info_block.get_text(" ", strip=True)
                 lines = [l.strip() for l in text.split("\n") if len(l.strip()) > 2]
-                if len(lines) > 0:
+                if lines:
                     details["structure"] = lines[0]
             
-            # Extraction des détails de mission
             desc_tag = soup.find("div", class_="description") or soup.find("article")
             if desc_tag:
                 clean_desc = desc_tag.get_text(" ", strip=True)
@@ -104,9 +105,8 @@ def fetch_vitijob_offers():
     except Exception as e:
         print(f"Erreur lors du scraping : {e}")
         
-    # Enrichissement des annonces filtrées
     final_offers = []
-    for job in offers[:10]: # Limite de sécurité
+    for job in offers[:10]:
         details = fetch_job_details(job["url"], headers)
         job.update(details)
         final_offers.append(job)
@@ -166,7 +166,7 @@ def generate_docx(new_offers, filename):
     styles['Heading 2'].font.bold = True
     styles['Heading 2'].font.color.rgb = RGBColor(120, 0, 0)
 
-    # Titre
+    # Titre principal
     t_p = doc.add_paragraph()
     t_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     t_run = t_p.add_run("SYNTHÈSE DES OPPORTUNITÉS D'ENCADREMENT & DIRECTION")
@@ -226,10 +226,15 @@ def generate_docx(new_offers, filename):
     for item in new_offers:
         add_numbered_heading(doc, item["title"], level=2)
         p = doc.add_paragraph()
+        
         p.add_run("• Structure : ").bold = True
-        p.add_run(f"{item.get('structure', 'N/C')}\n")
+        struct_val = item.get("structure", "N/C")
+        p.add_run(f"{struct_val}\n")
+        
         p.add_run("• Missions & Profil : ").bold = True
-        p.add_run(f"{item.get('missions', 'Consulter l\'annonce.')}\n")
+        mission_val = item.get("missions", "Consulter l'annonce.")
+        p.add_run(f"{mission_val}\n")
+        
         p.add_run("• Lien direct : ").bold = True
         p.add_run(item["url"])
 
