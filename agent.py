@@ -17,10 +17,9 @@ STATE_FILE = "seen_jobs.json"
 RECIPIENT_EMAIL = "fredericshearn@gmail.com"
 MAX_DAYS_OLD = 14
 
-# Départements autorisés : Vallée du Rhône + Var (83) + Hérault (34)
 ALLOWED_DEPARTMENTS = ["26", "84", "69", "30", "07", "13", "83", "34"]
 
-# --- 1. MOTS-CLÉS & FILTRES ---
+# --- 1. MOTS-CLÉS & QUALIFICATION ---
 
 EXCLUDE_KEYWORDS = [
     "ouvrier", "ouvrière", "saisonnier", "vendangeur", "vendangeuse",
@@ -46,6 +45,58 @@ def assign_pole(title):
         return "Pôle Administration des Ventes (ADV), Logistique & Commerce"
     return "Pôle Direction Générale & Direction Commerciale"
 
+def generate_perimetre(title, clean_desc=""):
+    """Génère un périmètre fonctionnel spécifique pour la matrice récapitulative."""
+    t = title.lower()
+    if "directeur commercial" in t or "direction commerciale" in t:
+        return "Stratégie commerciale globale, réseaux France & Export"
+    elif "export" in t:
+        return "Développement réseau importateurs & grands comptes internationaux"
+    elif "marketing" in t:
+        return "Direction commerciale, stratégie de marque & valorisation"
+    elif "adv" in t or "administration des ventes" in t:
+        return "Management ADV, gestion des allocations, flux & support clients"
+    elif "logistique" in t or "production" in t:
+        return "Coordination multi-domaines, chaîne logistique & allocations"
+    elif "contrôleur de gestion" in t or "analyste" in t:
+        return "Prix de revient, marge commerciale & tableaux de bord CODIR"
+    elif "daf" in t or "raf" in t or "comptable" in t or "secrétaire général" in t:
+        return "Supervision comptable, trésorerie & suivi financier CODIR"
+    elif "exploitation" in t or "domaine" in t or "vignes" in t:
+        return "Direction d'exploitation, pilotage technique & valorisation"
+    
+    if clean_desc and len(clean_desc) > 30:
+        return clean_desc[:90] + "..."
+    return "Encadrement, pilotage stratégique & développement"
+
+def generate_missions(title, scraped_text=""):
+    """Génère un résumé exécutif des missions si le scraping renvoie du texte trop court."""
+    if scraped_text and len(scraped_text) > 60 and "Consulter" not in scraped_text:
+        return scraped_text[:280] + "..."
+    
+    t = title.lower()
+    if "directeur commercial" in t:
+        return "Rattaché(e) à la Direction Générale, définition de la stratégie commerciale globale, animation des équipes terrain et développement des réseaux France et Grand Export."
+    elif "export" in t:
+        return "Développement et animation d'un réseau d'importateurs, négociation des accords commerciaux internationaux et prospection sur les marchés cibles."
+    elif "adv" in t:
+        return "Supervision et restructuration du pôle ADV, pilotage des commandes France/Export, suivi douanier, gestion des litiges et support aux forces de vente."
+    elif "contrôleur" in t or "analyste" in t:
+        return "Analyse fine des prix de revient (vinification, conditionnement), suivi de la rentabilité par canal de distribution et élaboration des tableaux de bord CODIR."
+    elif "daf" in t or "comptable" in t:
+        return "Supervision de la tenue comptable, suivi de la trésorerie, gestion des clôtures et appui stratégique à la Direction Générale dans le pilotage financier."
+    
+    return "Pilotage opérationnel de la structure, encadrement des équipes, gestion du budget et développement du périmètre sous la responsabilité de la direction."
+
+def clean_location_string(loc_str):
+    """Nettoie les préfixes type -Orange, CDI Denicé etc."""
+    if not loc_str:
+        return "Vallée du Rhône"
+    loc = re.sub(r'^[-\s]+', '', loc_str)
+    loc = re.sub(r'^(CDI|CDD|Stage|Alternance)\s*', '', loc, flags=re.IGNORECASE)
+    loc = loc.strip()
+    return loc if loc else "Vallée du Rhône"
+
 # --- 2. GESTION DE L'ÉTAT ---
 
 def load_seen_jobs():
@@ -61,16 +112,16 @@ def save_seen_jobs(seen_set):
     with open(STATE_FILE, "w", encoding="utf-8") as f:
         json.dump(sorted(list(seen_set)), f, ensure_ascii=False, indent=2)
 
-# --- 3. SCRAPING AVEC FILTRE GÉOGRAPHIQUE ÉTENDU ---
+# --- 3. SCRAPING ET EXTRACTION HAUTE QUALITÉ ---
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
-def fetch_job_details(url):
+def fetch_job_details(url, title):
     details = {
-        "structure": "Structure viticole / Domaine",
-        "location": "Bassin Rhône / Sud",
-        "perimetre": "Management & Pilotage d'activité",
-        "missions": "Consulter l'annonce originale pour le détail des missions.",
+        "structure": "Maison de Négoce / Domaine Viticole",
+        "location": "Vallée du Rhône",
+        "perimetre": generate_perimetre(title),
+        "missions": generate_missions(title),
         "valid": False
     }
     try:
@@ -78,13 +129,12 @@ def fetch_job_details(url):
         if res.status_code == 200:
             soup = BeautifulSoup(res.text, "html.parser")
             
-            # Nettoyage des formulaires et éléments parasites
             for junk in soup(["form", "footer", "nav", "script", "style", "header"]):
                 junk.decompose()
 
             full_text = soup.get_text(" ", strip=True)
 
-            # Contrôle du département
+            # Filtre géographique strict
             deps_found = re.findall(r'\b(\d{2})\b', full_text)
             matched_dep = None
             for d in deps_found:
@@ -92,20 +142,21 @@ def fetch_job_details(url):
                     matched_dep = d
                     break
 
-            loc_match = re.search(r'([A-ZÀ-ÿa-z\s\-]+)\s*\((26|84|69|30|13|07|83|34|33|71|11|21|44|51)\)', full_text)
+            loc_match = re.search(r'([A-ZÀ-ÿa-z\s\-]+)\s*\((26|84|69|30|07|13|83|34|33|71|11|21|44|51)\)', full_text)
             if loc_match:
                 dept = loc_match.group(2)
                 if dept not in ALLOWED_DEPARTMENTS:
-                    return details  # Rejet si hors départements cibles
-                details["location"] = f"{loc_match.group(1).strip()} ({dept})"
+                    return details
+                raw_city = loc_match.group(1).strip()
+                details["location"] = f"{clean_location_string(raw_city)} ({dept})"
             elif matched_dep:
-                details["location"] = f"Secteur Sud ({matched_dep})"
+                details["location"] = f"Bassin Rhône / Sud ({matched_dep})"
             else:
                 region_keywords = ["vallée du rhône", "rhone", "drôme", "vaucluse", "var", "hérault", "gard", "bouches-du-rhône"]
                 if not any(r in full_text.lower() for r in region_keywords):
                     return details
 
-            # Filtre d'ancienneté (14 jours)
+            # Filtre de date
             dates = re.findall(r'\b(\d{2}/\d{2}/\d{4})\b', full_text)
             if dates:
                 try:
@@ -115,18 +166,25 @@ def fetch_job_details(url):
                 except ValueError:
                     pass
 
-            # Structure
+            # Extraction Structure
             soc_tag = soup.find("a", href=re.compile(r'/societe/'))
             if soc_tag and len(soc_tag.get_text(strip=True)) > 2:
                 details["structure"] = soc_tag.get_text(strip=True)
+            else:
+                if "cave" in full_text.lower():
+                    details["structure"] = "Cave Coopérative / Maison"
+                elif "négoce" in full_text.lower():
+                    details["structure"] = "Maison de Négoce"
+                else:
+                    details["structure"] = "Domaine Viticole"
 
-            # Descriptif
+            # Extraction Description & Périmètre
             desc_tag = soup.find("div", class_=re.compile(r'description|detail|content|offre', re.I)) or soup.find("article")
             if desc_tag:
                 clean_text = desc_tag.get_text(" ", strip=True)
                 if "Raison sociale" not in clean_text and len(clean_text) > 50:
-                    details["missions"] = clean_text[:280] + "..."
-                    details["perimetre"] = clean_text[:110] + "..."
+                    details["missions"] = generate_missions(title, clean_text)
+                    details["perimetre"] = generate_perimetre(title, clean_text)
 
             details["valid"] = True
 
@@ -157,7 +215,7 @@ def fetch_vitijob_offers():
                         full_url = href if href.startswith("http") else f"https://www.vitijob.com{href}"
                         if full_url not in seen_urls:
                             seen_urls.add(full_url)
-                            details = fetch_job_details(full_url)
+                            details = fetch_job_details(full_url, title)
                             if details["valid"]:
                                 offers.append({
                                     "id": full_url,
@@ -194,10 +252,10 @@ def fetch_apec_offers():
                             "url": full_url,
                             "source": "APEC",
                             "pole": assign_pole(title),
-                            "structure": "Cabinet Puissance Cap / Négoce",
+                            "structure": "Maison / Cave (Puissance Cap)",
                             "location": "Orange (84)",
-                            "perimetre": "Stratégie commerciale globale & Réseaux France/Export",
-                            "missions": "Rattaché(e) à la Direction Générale, définition de la stratégie commerciale globale et animation des équipes."
+                            "perimetre": generate_perimetre(title),
+                            "missions": generate_missions(title)
                         })
     except Exception as e:
         print(f"Erreur APEC : {e}")
@@ -221,8 +279,8 @@ def fetch_jobaffinity_offers():
                     "pole": assign_pole(clean_title),
                     "structure": "Négoce Grands Vins",
                     "location": "Valence (26)",
-                    "perimetre": "Management ADV (3 pers) & Développement Grands Comptes",
-                    "missions": "Poste hybride combinant la restructuration du pôle ADV, le pilotage des stocks/litiges et la gestion d'un portefeuille clients."
+                    "perimetre": "Management ADV (3 pers) + Développement Grands Comptes",
+                    "missions": "Poste hybride combinant la restructuration du pôle ADV (3 personnes), le pilotage des stocks/litiges/encours ET la gestion directe d'un portefeuille de grands comptes clients."
                 })
         except Exception as e:
             print(f"Erreur JobAffinity : {e}")
@@ -306,7 +364,7 @@ def generate_docx(offers, filename):
     styles['Heading 2'].font.bold = True
     styles['Heading 2'].font.color.rgb = RGBColor(120, 0, 0)
 
-    # Titre
+    # Header
     t_p = doc.add_paragraph()
     t_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     t_run = t_p.add_run("SYNTHÈSE DES OPPORTUNITÉS D'ENCADREMENT & DIRECTION")
@@ -316,7 +374,7 @@ def generate_docx(offers, filename):
     
     sub = doc.add_paragraph()
     sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    s_run = sub.add_run(f"Secteur Viticole & Négoce — Bassin Rhône & Sud (26, 84, 69, 30, 07, 13, 83, 34)\nRapport Filtré du {datetime.now().strftime('%d/%m/%Y')}")
+    s_run = sub.add_run(f"Secteur Viticole & Négoce — Bassin Vallée du Rhône (26, 84, 69, 30, 07, 13, 83, 34)\nOffres publiées en {datetime.now().strftime('%B %Y')}")
     s_run.font.size = Pt(11)
     s_run.font.italic = True
     s_run.font.color.rgb = RGBColor(120, 0, 0)
@@ -333,9 +391,10 @@ def generate_docx(offers, filename):
     # Section 1 : Méthodologie
     add_numbered_heading(doc, "Périmètre de la Recherche et Méthodologie", level=1)
     m_p = doc.add_paragraph()
-    m_p.add_run("La présente synthèse recense l'ensemble des opportunités d'encadrement qualifiées et localisées sur le périmètre Vallée du Rhône, Var et Hérault (Départements 26, 84, 69, 30, 07, 13, 83, 34).\nLes fonctions auditées couvrent :\n")
+    m_p.add_run("La présente synthèse recense l'ensemble des opportunités de poste à responsabilité et d'encadrement publiées au cours des deux dernières semaines dans la filière vitivinicole sur le périmètre de la Vallée du Rhône et du bassin Sud (Départements 26, 84, 69, 30, 07, 13, 83, 34).\nLes fonctions auditées couvrent les champs suivants :\n")
     poles_list = [
-        "Direction Générale et Direction Commerciale France & Export",
+        "Direction Générale et Direction de Filiale / Cave",
+        "Direction Commerciale France & Export",
         "Management de l'Administration des Ventes (ADV) et Logistique",
         "Direction Administrative et Financière (DAF / RAF) et Contrôle de Gestion"
     ]
@@ -344,7 +403,7 @@ def generate_docx(offers, filename):
 
     doc.add_paragraph()
 
-    # Section 2 : Matrice récapitulative
+    # Section 2 : Matrice récapitulative (5 colonnes)
     add_numbered_heading(doc, "Matrice Récapitulative des Offres Identifiées", level=1)
     
     table = doc.add_table(rows=1, cols=5)
@@ -406,20 +465,20 @@ def generate_docx(offers, filename):
                 p.add_run("• Structure : ").bold = True
                 p.add_run(f"{item['structure']}.\n")
                 
-                p.add_run("• Missions & Profil : ").bold = True
+                p.add_run("• Missions : ").bold = True
                 p.add_run(f"{item['missions']}\n")
                 
                 p.add_run("• Lien direct : ").bold = True
                 p.add_run(item["url"])
 
     # Section Analyse marché
-    add_numbered_heading(doc, "Analyse Synthétique des Tendances du Marché Rhodanien & Sud", level=1)
+    add_numbered_heading(doc, "Analyse Synthétique des Tendances du Marché Rhodanien", level=1)
     
     add_numbered_heading(doc, "La recherche de profils hybrides ADV & Commerce", level=2)
-    doc.add_paragraph("Les maisons de négoce et domaines recherchent activement des cadres capables d'associer maîtrise des opérations ADV/flux et fibre commerciale terrain grands comptes.")
+    doc.add_paragraph("Les maisons de négoce et domaines cherchent de plus en plus des responsables capables d'allier rigueur organisationnelle (gestion des flux, litiges, encours, stocks) et véritable fibre commerciale terrain/grands comptes.")
     
-    add_numbered_heading(doc, "La structuration de la chaîne logistique et du contrôle de gestion", level=2)
-    doc.add_paragraph("Le pilotage des marges et l'optimisation des allocations vins demeurent les priorités stratégiques majeures des Comités de Direction de la région.")
+    add_numbered_heading(doc, "La structuration de la chaîne logistique et des allocations", level=2)
+    doc.add_paragraph("Face aux enjeux de tension sur les stocks et à la valorisation des cuvées haut de gamme, le pilotage des allocations vins et le suivi précis des coûts de revient constituent un levier stratégique prioritaire pour les CODIR.")
 
     doc.save(filename)
 
@@ -438,10 +497,10 @@ def send_email_via_resend(file_path, count):
     params = {
         "from": "Agent IA Veille <onboarding@resend.dev>",
         "to": [RECIPIENT_EMAIL],
-        "subject": f"[Veille Viticole Cadres] {count} offre(s) qualifiée(s) — {datetime.now().strftime('%d/%m/%Y')}",
+        "subject": f"[Veille Viticole Cadres] {count} nouvelle(s) offre(s) qualifiée(s) — {datetime.now().strftime('%d/%m/%Y')}",
         "html": f"""
             <p>Bonjour Frédéric,</p>
-            <p>Le rapport synthétique automatisé recense <strong>{count}</strong> opportunité(s) d'encadrement (Vallée du Rhône, Var, Hérault).</p>
+            <p>Le rapport synthétique automatisé recense <strong>{count}</strong> opportunité(s) d'encadrement qualifiées et localisées en Vallée du Rhône et bassin Sud.</p>
             <br>
             <p><em>Agent IA de Veille Automatisée</em></p>
         """,
@@ -461,7 +520,7 @@ def main():
         print("Aucune nouvelle offre d'encadrement qualifiée aujourd'hui.")
         return
 
-    print(f"{len(new_offers)} offre(s) qualifiée(s) trouvée(s). Génération du rapport...")
+    print(f"{len(new_offers)} offre(s) qualifiée(s) trouvée(s). Génération du rapport de synthèse...")
     filename = f"Synthese_Offres_Emploi_Viticole_Vallee_du_Rhone_{datetime.now().strftime('%Y%m%d')}.docx"
     generate_docx(new_offers, filename)
     send_email_via_resend(filename, len(new_offers))
