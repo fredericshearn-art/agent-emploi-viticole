@@ -36,7 +36,6 @@ POLE_ADV_LOG = ["adv", "administration des ventes", "logistique", "production", 
 POLE_FINANCE = ["daf", "raf", "gestion", "comptable", "finance", "contrôle de gestion", "analyste", "trésorerie"]
 
 def clean_title(title):
-    """Retire le suffixe (H/F) et les espaces superflus."""
     t = re.sub(r'\s*\([HhFf\s/]+\)', '', title)
     return t.strip()
 
@@ -117,13 +116,13 @@ def save_seen_jobs(seen_set):
     with open(STATE_FILE, "w", encoding="utf-8") as f:
         json.dump(sorted(list(seen_set)), f, ensure_ascii=False, indent=2)
 
-# --- 3. SOURCES D'INFORMATION & CIBLAGE ---
+# --- 3. SOURCES D'INFORMATION ---
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
 def fetch_job_details(url, title):
     details = {
-        "structure": "Maison / Domaine Viticole",
+        "structure": "Maison de Négoce / Domaine",
         "location": "Vallée du Rhône",
         "perimetre": generate_perimetre(title),
         "missions": generate_missions(title),
@@ -159,6 +158,13 @@ def fetch_job_details(url, title):
             soc_tag = soup.find("a", href=re.compile(r'/societe/'))
             if soc_tag and len(soc_tag.get_text(strip=True)) > 2:
                 details["structure"] = soc_tag.get_text(strip=True)
+            else:
+                if "cave" in full_text.lower():
+                    details["structure"] = "Cave Coopérative / Maison"
+                elif "négoce" in full_text.lower():
+                    details["structure"] = "Maison de Négoce"
+                else:
+                    details["structure"] = "Domaine Viticole"
 
             desc_tag = soup.find("div", class_=re.compile(r'description|detail|content|offre', re.I)) or soup.find("article")
             if desc_tag:
@@ -307,14 +313,19 @@ def get_headhunter_and_apec_offers():
 
 def fetch_all_sources():
     all_offers = []
+    # Les offres certifiées CODIR passent en priorité
     all_offers.extend(get_headhunter_and_apec_offers())
     all_offers.extend(fetch_vitijob_offers())
     
     unique_offers = {}
     for job in all_offers:
-        key = f"{job['title'].lower()}_{job['location'].lower()}"
-        if key not in unique_offers:
-            unique_offers[key] = job
+        # Clé de dédoublonnage stricte basée sur l'intitulé et la ville
+        norm_title = re.sub(r'[^a-zA-Z0-9]', '', job['title'].lower())
+        norm_loc = re.sub(r'[^a-zA-Z0-9]', '', job['location'].lower())
+        dedup_key = f"{norm_title}_{norm_loc}"
+        
+        if dedup_key not in unique_offers:
+            unique_offers[dedup_key] = job
             
     return list(unique_offers.values())
 
@@ -383,7 +394,6 @@ def generate_docx(offers, filename):
     styles['Heading 2'].font.bold = True
     styles['Heading 2'].font.color.rgb = RGBColor(120, 0, 0)
 
-    # Header
     now = datetime.now()
     month_name = MONTHS_FR.get(now.month, "Septembre")
     
@@ -401,7 +411,6 @@ def generate_docx(offers, filename):
     s_run.font.italic = True
     s_run.font.color.rgb = RGBColor(120, 0, 0)
 
-    # Sommaire
     s_title = doc.add_paragraph()
     st_run = s_title.add_run("Sommaire Dynamique")
     st_run.bold = True
@@ -410,7 +419,6 @@ def generate_docx(offers, filename):
     add_toc_field(doc)
     doc.add_paragraph()
 
-    # Section 1 : Méthodologie
     add_numbered_heading(doc, "Périmètre de la Recherche et Méthodologie", level=1)
     m_p = doc.add_paragraph()
     m_p.add_run("La présente synthèse recense l'ensemble des opportunités de poste à responsabilité et d'encadrement publiées au cours des deux dernières semaines dans la filière vitivinicole sur le périmètre de la Vallée du Rhône (Départements 26, 84, 69, 30).\nLes fonctions auditées couvrent les champs suivants :\n")
@@ -425,7 +433,6 @@ def generate_docx(offers, filename):
 
     doc.add_paragraph()
 
-    # Section 2 : Matrice récapitulative
     add_numbered_heading(doc, "Matrice Récapitulative des Offres Identifiées", level=1)
     
     table = doc.add_table(rows=1, cols=5)
@@ -468,7 +475,6 @@ def generate_docx(offers, filename):
 
     doc.add_paragraph()
 
-    # Sections par Pôles
     poles = [
         "Pôle Direction Générale & Direction Commerciale",
         "Pôle Administration des Ventes (ADV), Logistique & Commerce",
@@ -493,7 +499,6 @@ def generate_docx(offers, filename):
                 p.add_run("• Lien direct : ").bold = True
                 p.add_run(item["url"])
 
-    # Section Analyse marché
     add_numbered_heading(doc, "Analyse Synthétique des Tendances du Marché Rhodanien", level=1)
     
     add_numbered_heading(doc, "La recherche de profils hybrides ADV & Commerce", level=2)
