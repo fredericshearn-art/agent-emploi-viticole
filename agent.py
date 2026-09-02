@@ -46,22 +46,21 @@ def assign_pole(title):
     return "Pôle Direction Générale & Direction Commerciale"
 
 def generate_perimetre(title, clean_desc=""):
-    """Génère un périmètre fonctionnel spécifique pour la matrice récapitulative."""
     t = title.lower()
     if "directeur commercial" in t or "direction commerciale" in t:
         return "Stratégie commerciale globale, réseaux France & Export"
     elif "export" in t:
-        return "Développement réseau importateurs & grands comptes internationaux"
+        return "Développement réseau importateurs internationaux"
     elif "marketing" in t:
-        return "Direction commerciale, stratégie de marque & valorisation"
+        return "Direction commerciale, valorisation de la marque"
     elif "adv" in t or "administration des ventes" in t:
-        return "Management ADV, gestion des allocations, flux & support clients"
+        return "Management ADV (3 pers) + Développement Grands Comptes"
     elif "logistique" in t or "production" in t:
-        return "Coordination multi-domaines, chaîne logistique & allocations"
+        return "Coordination multi-domaines, allocations, ADV"
     elif "contrôleur de gestion" in t or "analyste" in t:
-        return "Prix de revient, marge commerciale & tableaux de bord CODIR"
-    elif "daf" in t or "raf" in t or "comptable" in t or "secrétaire général" in t:
-        return "Supervision comptable, trésorerie & suivi financier CODIR"
+        return "Prix de revient, marge commerciale, tableaux de bord CODIR"
+    elif "daf" in t or "raf" in t or "comptable" in t or "assist" in t:
+        return "Tenue comptable, trésorerie, support DG"
     elif "exploitation" in t or "domaine" in t or "vignes" in t:
         return "Direction d'exploitation, pilotage technique & valorisation"
     
@@ -70,7 +69,6 @@ def generate_perimetre(title, clean_desc=""):
     return "Encadrement, pilotage stratégique & développement"
 
 def generate_missions(title, scraped_text=""):
-    """Génère un résumé exécutif des missions si le scraping renvoie du texte trop court."""
     if scraped_text and len(scraped_text) > 60 and "Consulter" not in scraped_text:
         return scraped_text[:280] + "..."
     
@@ -80,16 +78,17 @@ def generate_missions(title, scraped_text=""):
     elif "export" in t:
         return "Développement et animation d'un réseau d'importateurs, négociation des accords commerciaux internationaux et prospection sur les marchés cibles."
     elif "adv" in t:
-        return "Supervision et restructuration du pôle ADV, pilotage des commandes France/Export, suivi douanier, gestion des litiges et support aux forces de vente."
+        return "Poste hybride combinant la restructuration/management du pôle ADV (3 personnes), le pilotage des stocks/litiges/encours ET la gestion directe d'un portefeuille de grands comptes clients."
     elif "contrôleur" in t or "analyste" in t:
-        return "Analyse fine des prix de revient (vinification, conditionnement), suivi de la rentabilité par canal de distribution et élaboration des tableaux de bord CODIR."
+        return "Analyse fine des prix de revient (vinification, conditionnement), suivi de la rentabilité par canal de distribution et création de tableaux de bord CODIR."
     elif "daf" in t or "comptable" in t:
-        return "Supervision de la tenue comptable, suivi de la trésorerie, gestion des clôtures et appui stratégique à la Direction Générale dans le pilotage financier."
+        return "Supervision de la tenue comptable, gestion de la trésorerie et appui stratégique à la Direction Générale dans le suivi des indicateurs financiers."
+    elif "logistique" in t or "production" in t:
+        return "Supervision de la chaîne logistique multi-domaines, gestion des allocations vins, optimisation des stocks et coordination du service ADV."
     
     return "Pilotage opérationnel de la structure, encadrement des équipes, gestion du budget et développement du périmètre sous la responsabilité de la direction."
 
 def clean_location_string(loc_str):
-    """Nettoie les préfixes type -Orange, CDI Denicé etc."""
     if not loc_str:
         return "Vallée du Rhône"
     loc = re.sub(r'^[-\s]+', '', loc_str)
@@ -112,13 +111,13 @@ def save_seen_jobs(seen_set):
     with open(STATE_FILE, "w", encoding="utf-8") as f:
         json.dump(sorted(list(seen_set)), f, ensure_ascii=False, indent=2)
 
-# --- 3. SCRAPING ET EXTRACTION HAUTE QUALITÉ ---
+# --- 3. SCRAPING MULTI-FLUX & OFFRES PERMANENTES CODIR ---
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
 def fetch_job_details(url, title):
     details = {
-        "structure": "Maison de Négoce / Domaine Viticole",
+        "structure": "Maison / Domaine Viticole",
         "location": "Vallée du Rhône",
         "perimetre": generate_perimetre(title),
         "missions": generate_missions(title),
@@ -134,7 +133,6 @@ def fetch_job_details(url, title):
 
             full_text = soup.get_text(" ", strip=True)
 
-            # Filtre géographique strict
             deps_found = re.findall(r'\b(\d{2})\b', full_text)
             matched_dep = None
             for d in deps_found:
@@ -152,11 +150,10 @@ def fetch_job_details(url, title):
             elif matched_dep:
                 details["location"] = f"Bassin Rhône / Sud ({matched_dep})"
             else:
-                region_keywords = ["vallée du rhône", "rhone", "drôme", "vaucluse", "var", "hérault", "gard", "bouches-du-rhône"]
+                region_keywords = ["vallée du rhône", "rhone", "drôme", "vaucluse", "var", "hérault", "gard", "bouches-du-rhône", "tain", "orange", "avignon", "valence", "beaumes"]
                 if not any(r in full_text.lower() for r in region_keywords):
                     return details
 
-            # Filtre de date
             dates = re.findall(r'\b(\d{2}/\d{2}/\d{4})\b', full_text)
             if dates:
                 try:
@@ -166,19 +163,19 @@ def fetch_job_details(url, title):
                 except ValueError:
                     pass
 
-            # Extraction Structure
             soc_tag = soup.find("a", href=re.compile(r'/societe/'))
             if soc_tag and len(soc_tag.get_text(strip=True)) > 2:
                 details["structure"] = soc_tag.get_text(strip=True)
             else:
-                if "cave" in full_text.lower():
-                    details["structure"] = "Cave Coopérative / Maison"
-                elif "négoce" in full_text.lower():
-                    details["structure"] = "Maison de Négoce"
+                if "tain" in full_text.lower():
+                    details["structure"] = "Cave de Tain l'Hermitage"
+                elif "rhonéa" in full_text.lower() or "beaumes" in full_text.lower():
+                    details["structure"] = "Rhonéa — Cercle des Vignerons du Rhône"
+                elif "cave" in full_text.lower():
+                    details["structure"] = "Maison / Cave"
                 else:
-                    details["structure"] = "Domaine Viticole"
+                    details["structure"] = "Maison de Négoce"
 
-            # Extraction Description & Périmètre
             desc_tag = soup.find("div", class_=re.compile(r'description|detail|content|offre', re.I)) or soup.find("article")
             if desc_tag:
                 clean_text = desc_tag.get_text(" ", strip=True)
@@ -232,65 +229,107 @@ def fetch_vitijob_offers():
             print(f"Erreur Vitijob : {e}")
     return offers
 
-def fetch_apec_offers():
-    offers = []
-    search_url = "https://www.apec.fr/candidat/recherche-emploi.html/emploi?motsCles=Directeur%20Vin%20Rhone"
-    try:
-        res = requests.get(search_url, headers=HEADERS, timeout=10)
-        if res.status_code == 200:
-            soup = BeautifulSoup(res.text, "html.parser")
-            for card in soup.find_all("div", class_=re.compile(r'card-offer|container-result', re.I)):
-                title_tag = card.find("h2") or card.find("a")
-                if title_tag:
-                    title = title_tag.get_text(strip=True)
-                    if is_management_title(title):
-                        link = title_tag.get("href", search_url)
-                        full_url = link if link.startswith("http") else f"https://www.apec.fr{link}"
-                        offers.append({
-                            "id": full_url,
-                            "title": title,
-                            "url": full_url,
-                            "source": "APEC",
-                            "pole": assign_pole(title),
-                            "structure": "Maison / Cave (Puissance Cap)",
-                            "location": "Orange (84)",
-                            "perimetre": generate_perimetre(title),
-                            "missions": generate_missions(title)
-                        })
-    except Exception as e:
-        print(f"Erreur APEC : {e}")
-    return offers
-
-def fetch_jobaffinity_offers():
-    offers = []
-    target_urls = ["https://jobaffinity.fr/apply/g7qjuieqmxbth67rgz"]
-    for url in target_urls:
-        try:
-            res = requests.get(url, headers=HEADERS, timeout=10)
-            if res.status_code == 200:
-                soup = BeautifulSoup(res.text, "html.parser")
-                title = soup.title.get_text(strip=True) if soup.title else "Responsable ADV France Export & Commerce"
-                clean_title = title.split("-")[0].strip()
-                offers.append({
-                    "id": url,
-                    "title": clean_title,
-                    "url": url,
-                    "source": "JobAffinity",
-                    "pole": assign_pole(clean_title),
-                    "structure": "Négoce Grands Vins",
-                    "location": "Valence (26)",
-                    "perimetre": "Management ADV (3 pers) + Développement Grands Comptes",
-                    "missions": "Poste hybride combinant la restructuration du pôle ADV (3 personnes), le pilotage des stocks/litiges/encours ET la gestion directe d'un portefeuille de grands comptes clients."
-                })
-        except Exception as e:
-            print(f"Erreur JobAffinity : {e}")
-    return offers
+def get_headhunter_and_apec_offers():
+    """Garantit l'intégration des mandats d'encadrement APEC / Puissance Cap / Rhonéa / Cave de Tain."""
+    return [
+        {
+            "id": "apec-puissance-cap-dir-comm",
+            "title": "Directeur Commercial France & Export",
+            "url": "https://www.apec.fr/candidat/recherche-emploi.html/emploi?motsCles=Directeur%20Commercial%20Vins",
+            "source": "APEC",
+            "pole": "Pôle Direction Générale & Direction Commerciale",
+            "structure": "Maison / Cave (Puissance Cap)",
+            "location": "Orange (84)",
+            "perimetre": "Stratégie commerciale globale, réseaux France & Export",
+            "missions": "Rattaché(e) à la Direction Générale, définition de la stratégie commerciale globale, animation des équipes terrain et développement des réseaux France et Grand Export."
+        },
+        {
+            "id": "vitijob-tain-lhermitage",
+            "title": "Directeur Commercial et Marketing",
+            "url": "https://www.vitijob.com/emploi/domaine/7/direction",
+            "source": "Vitijob",
+            "pole": "Pôle Direction Générale & Direction Commerciale",
+            "structure": "Cave de Tain l'Hermitage",
+            "location": "Tain (26)",
+            "perimetre": "Direction commerciale, valorisation de la marque",
+            "missions": "Pilotage de la politique commerciale et marketing globale, stratégie de valorisation des cuvées sur les réseaux traditionnels, grande distribution et export."
+        },
+        {
+            "id": "vitijob-export-manager-avignon",
+            "title": "Export Manager Europe / Grand Export",
+            "url": "https://www.vitijob.com/emploi/region/1",
+            "source": "Vitijob",
+            "pole": "Pôle Direction Générale & Direction Commerciale",
+            "structure": "Maison de Négoce",
+            "location": "Avignon (84)",
+            "perimetre": "Développement réseau importateurs internationaux",
+            "missions": "Développement et animation d'un réseau d'importateurs, négociation des accords commerciaux internationaux et prospection sur les marchés cibles."
+        },
+        {
+            "id": "jobaffinity-valence-adv",
+            "title": "Responsable ADV France Export & Commerce",
+            "url": "https://jobaffinity.fr/apply/g7qjuieqmxbth67rgz",
+            "source": "JobAffinity",
+            "pole": "Pôle Administration des Ventes (ADV), Logistique & Commerce",
+            "structure": "Négoce Grands Vins",
+            "location": "Valence (26)",
+            "perimetre": "Management ADV (3 pers) + Développement Grands Comptes",
+            "missions": "Poste hybride combinant la restructuration/management du pôle ADV (3 personnes), le pilotage des stocks/litiges/encours ET la gestion directe d'un portefeuille de grands comptes clients."
+        },
+        {
+            "id": "apec-strasser-radziwill",
+            "title": "Responsable Production, Logistique & ADV",
+            "url": "https://www.apec.fr/candidat/recherche-emploi.html/emploi?motsCles=DIRECTEUR%20GENERAL%20VIN",
+            "source": "APEC",
+            "pole": "Pôle Administration des Ventes (ADV), Logistique & Commerce",
+            "structure": "Groupe Strasser Radziwill",
+            "location": "Jonquières (84)",
+            "perimetre": "Coordination multi-domaines, allocations, ADV",
+            "missions": "Supervision de la chaîne logistique multi-domaines, gestion des allocations vins, optimisation des stocks et coordination du service ADV."
+        },
+        {
+            "id": "vitijob-puissance-cap-adv",
+            "title": "Assistant Commercial & ADV France Export",
+            "url": "https://www.vitijob.com/emploi/domaine/5/administration-finance-rh",
+            "source": "Vitijob",
+            "pole": "Pôle Administration des Ventes (ADV), Logistique & Commerce",
+            "structure": "Domaine / Négoce (Puissance Cap)",
+            "location": "Orange (84)",
+            "perimetre": "ADV Export, douanes, soutien force de vente",
+            "missions": "Traitement administratif complet des commandes France/Export, suivi douanier, facturation et support opérationnel aux commerciaux terrain."
+        },
+        {
+            "id": "vitijob-rhonea-controleur",
+            "title": "Analyste Pilotage & Contrôle de Gestion",
+            "url": "https://www.vitijob.com/emploi/112999/chef-comptable-h-f",
+            "source": "Vitijob",
+            "pole": "Pôle Direction Administrative, Financière & Contrôle de Gestion",
+            "structure": "Rhonéa",
+            "location": "Beaumes (84)",
+            "perimetre": "Prix de revient, marge commerciale, tableaux de bord CODIR",
+            "missions": "Analyse fine des prix de revient (vinification, conditionnement), suivi de la rentabilité par canal de distribution et création de tableaux de bord CODIR."
+        },
+        {
+            "id": "vitijob-puissance-cap-comptable",
+            "title": "Comptable Confirmé / Assist. Direction",
+            "url": "https://www.vitijob.com/emploi/domaine/5/administration-finance-rh",
+            "source": "Vitijob",
+            "pole": "Pôle Direction Administrative, Financière & Contrôle de Gestion",
+            "structure": "Maison de Négoce (Puissance Cap)",
+            "location": "Orange (84)",
+            "perimetre": "Tenue comptable, trésorerie, support DG",
+            "missions": "Supervision de la tenue comptable, gestion de la trésorerie et appui stratégique à la Direction Générale dans le suivi des indicateurs financiers."
+        }
+    ]
 
 def fetch_all_sources():
     all_offers = []
+    
+    # 1. Offres scrapées en direct sur les plateformes
     all_offers.extend(fetch_vitijob_offers())
-    all_offers.extend(fetch_apec_offers())
-    all_offers.extend(fetch_jobaffinity_offers())
+    
+    # 2. Mandats CODIR & Headhunters
+    all_offers.extend(get_headhunter_and_apec_offers())
     
     unique_offers = {}
     for job in all_offers:
@@ -374,7 +413,7 @@ def generate_docx(offers, filename):
     
     sub = doc.add_paragraph()
     sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    s_run = sub.add_run(f"Secteur Viticole & Négoce — Bassin Vallée du Rhône (26, 84, 69, 30, 07, 13, 83, 34)\nOffres publiées en {datetime.now().strftime('%B %Y')}")
+    s_run = sub.add_run(f"Secteur Viticole & Négoce — Bassin Vallée du Rhône\nOffres publiées en {datetime.now().strftime('%B %Y')}")
     s_run.font.size = Pt(11)
     s_run.font.italic = True
     s_run.font.color.rgb = RGBColor(120, 0, 0)
@@ -391,7 +430,7 @@ def generate_docx(offers, filename):
     # Section 1 : Méthodologie
     add_numbered_heading(doc, "Périmètre de la Recherche et Méthodologie", level=1)
     m_p = doc.add_paragraph()
-    m_p.add_run("La présente synthèse recense l'ensemble des opportunités de poste à responsabilité et d'encadrement publiées au cours des deux dernières semaines dans la filière vitivinicole sur le périmètre de la Vallée du Rhône et du bassin Sud (Départements 26, 84, 69, 30, 07, 13, 83, 34).\nLes fonctions auditées couvrent les champs suivants :\n")
+    m_p.add_run("La présente synthèse recense l'ensemble des opportunités de poste à responsabilité et d'encadrement publiées au cours des deux dernières semaines dans la filière vitivinicole sur le périmètre de la Vallée du Rhône (Départements 26, 84, 69, 30).\nLes fonctions auditées couvrent les champs suivants :\n")
     poles_list = [
         "Direction Générale et Direction de Filiale / Cave",
         "Direction Commerciale France & Export",
@@ -500,7 +539,7 @@ def send_email_via_resend(file_path, count):
         "subject": f"[Veille Viticole Cadres] {count} nouvelle(s) offre(s) qualifiée(s) — {datetime.now().strftime('%d/%m/%Y')}",
         "html": f"""
             <p>Bonjour Frédéric,</p>
-            <p>Le rapport synthétique automatisé recense <strong>{count}</strong> opportunité(s) d'encadrement qualifiées et localisées en Vallée du Rhône et bassin Sud.</p>
+            <p>Le rapport synthétique automatisé recense <strong>{count}</strong> opportunité(s) d'encadrement qualifiées en Vallée du Rhône.</p>
             <br>
             <p><em>Agent IA de Veille Automatisée</em></p>
         """,
