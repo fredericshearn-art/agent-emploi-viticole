@@ -2,7 +2,7 @@ import os
 import json
 import re
 import base64
-from datetime import datetime, timedelta
+from datetime import datetime
 import requests
 from bs4 import BeautifulSoup
 import resend
@@ -19,7 +19,12 @@ MAX_DAYS_OLD = 14
 
 ALLOWED_DEPARTMENTS = ["26", "84", "69", "30", "07", "13", "83", "34"]
 
-# --- 1. MOTS-CLÉS & QUALIFICATION ---
+MONTHS_FR = {
+    1: "Janvier", 2: "Février", 3: "Mars", 4: "Avril", 5: "Mai", 6: "Juin",
+    7: "Juillet", 8: "Août", 9: "Septembre", 10: "Octobre", 11: "Novembre", 12: "Décembre"
+}
+
+# --- 1. NETTOYAGE & QUALIFICATION ---
 
 EXCLUDE_KEYWORDS = [
     "ouvrier", "ouvrière", "saisonnier", "vendangeur", "vendangeuse",
@@ -29,6 +34,11 @@ EXCLUDE_KEYWORDS = [
 POLE_COMMERCIAL = ["directeur", "directrice", "direction", "commercial", "commerciale", "export", "marketing", "chef de secteur", "compte"]
 POLE_ADV_LOG = ["adv", "administration des ventes", "logistique", "production", "approvisionnement", "ordonnancement", "assistant commercial"]
 POLE_FINANCE = ["daf", "raf", "gestion", "comptable", "finance", "contrôle de gestion", "analyste", "trésorerie"]
+
+def clean_title(title):
+    """Retire le suffixe (H/F) et les espaces superflus."""
+    t = re.sub(r'\s*\([HhFf\s/]+\)', '', title)
+    return t.strip()
 
 def is_management_title(title):
     t = title.lower()
@@ -45,7 +55,7 @@ def assign_pole(title):
         return "Pôle Administration des Ventes (ADV), Logistique & Commerce"
     return "Pôle Direction Générale & Direction Commerciale"
 
-def generate_perimetre(title, clean_desc=""):
+def generate_perimetre(title):
     t = title.lower()
     if "directeur commercial" in t or "direction commerciale" in t:
         return "Stratégie commerciale globale, réseaux France & Export"
@@ -63,13 +73,10 @@ def generate_perimetre(title, clean_desc=""):
         return "Tenue comptable, trésorerie, support DG"
     elif "exploitation" in t or "domaine" in t or "vignes" in t:
         return "Direction d'exploitation, pilotage technique & valorisation"
-    
-    if clean_desc and len(clean_desc) > 30:
-        return clean_desc[:90] + "..."
     return "Encadrement, pilotage stratégique & développement"
 
 def generate_missions(title, scraped_text=""):
-    if scraped_text and len(scraped_text) > 60 and "Consulter" not in scraped_text:
+    if scraped_text and len(scraped_text) > 60 and "Consulter" not in scraped_text and "Raison sociale" not in scraped_text:
         return scraped_text[:280] + "..."
     
     t = title.lower()
@@ -93,8 +100,7 @@ def clean_location_string(loc_str):
         return "Vallée du Rhône"
     loc = re.sub(r'^[-\s]+', '', loc_str)
     loc = re.sub(r'^(CDI|CDD|Stage|Alternance)\s*', '', loc, flags=re.IGNORECASE)
-    loc = loc.strip()
-    return loc if loc else "Vallée du Rhône"
+    return loc.strip() if loc.strip() else "Vallée du Rhône"
 
 # --- 2. GESTION DE L'ÉTAT ---
 
@@ -111,7 +117,7 @@ def save_seen_jobs(seen_set):
     with open(STATE_FILE, "w", encoding="utf-8") as f:
         json.dump(sorted(list(seen_set)), f, ensure_ascii=False, indent=2)
 
-# --- 3. SCRAPING MULTI-FLUX & OFFRES PERMANENTES CODIR ---
+# --- 3. SOURCES D'INFORMATION & CIBLAGE ---
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
@@ -149,39 +155,16 @@ def fetch_job_details(url, title):
                 details["location"] = f"{clean_location_string(raw_city)} ({dept})"
             elif matched_dep:
                 details["location"] = f"Bassin Rhône / Sud ({matched_dep})"
-            else:
-                region_keywords = ["vallée du rhône", "rhone", "drôme", "vaucluse", "var", "hérault", "gard", "bouches-du-rhône", "tain", "orange", "avignon", "valence", "beaumes"]
-                if not any(r in full_text.lower() for r in region_keywords):
-                    return details
-
-            dates = re.findall(r'\b(\d{2}/\d{2}/\d{4})\b', full_text)
-            if dates:
-                try:
-                    pub_date = datetime.strptime(dates[0], "%d/%m/%Y")
-                    if (datetime.now() - pub_date).days > MAX_DAYS_OLD:
-                        return details
-                except ValueError:
-                    pass
 
             soc_tag = soup.find("a", href=re.compile(r'/societe/'))
             if soc_tag and len(soc_tag.get_text(strip=True)) > 2:
                 details["structure"] = soc_tag.get_text(strip=True)
-            else:
-                if "tain" in full_text.lower():
-                    details["structure"] = "Cave de Tain l'Hermitage"
-                elif "rhonéa" in full_text.lower() or "beaumes" in full_text.lower():
-                    details["structure"] = "Rhonéa — Cercle des Vignerons du Rhône"
-                elif "cave" in full_text.lower():
-                    details["structure"] = "Maison / Cave"
-                else:
-                    details["structure"] = "Maison de Négoce"
 
             desc_tag = soup.find("div", class_=re.compile(r'description|detail|content|offre', re.I)) or soup.find("article")
             if desc_tag:
                 clean_text = desc_tag.get_text(" ", strip=True)
                 if "Raison sociale" not in clean_text and len(clean_text) > 50:
                     details["missions"] = generate_missions(title, clean_text)
-                    details["perimetre"] = generate_perimetre(title, clean_text)
 
             details["valid"] = True
 
@@ -206,20 +189,21 @@ def fetch_vitijob_offers():
                 soup = BeautifulSoup(res.text, "html.parser")
                 for a_tag in soup.find_all("a", href=True):
                     href = a_tag["href"]
-                    title = a_tag.get_text(strip=True)
+                    raw_title = a_tag.get_text(strip=True)
                     
-                    if re.search(r'/emploi/\d+/', href) and is_management_title(title):
+                    if re.search(r'/emploi/\d+/', href) and is_management_title(raw_title):
                         full_url = href if href.startswith("http") else f"https://www.vitijob.com{href}"
                         if full_url not in seen_urls:
                             seen_urls.add(full_url)
-                            details = fetch_job_details(full_url, title)
+                            c_title = clean_title(raw_title)
+                            details = fetch_job_details(full_url, c_title)
                             if details["valid"]:
                                 offers.append({
                                     "id": full_url,
-                                    "title": title,
+                                    "title": c_title,
                                     "url": full_url,
                                     "source": "Vitijob",
-                                    "pole": assign_pole(title),
+                                    "pole": assign_pole(c_title),
                                     "structure": details["structure"],
                                     "location": details["location"],
                                     "perimetre": details["perimetre"],
@@ -230,7 +214,6 @@ def fetch_vitijob_offers():
     return offers
 
 def get_headhunter_and_apec_offers():
-    """Garantit l'intégration des mandats d'encadrement APEC / Puissance Cap / Rhonéa / Cave de Tain."""
     return [
         {
             "id": "apec-puissance-cap-dir-comm",
@@ -324,17 +307,14 @@ def get_headhunter_and_apec_offers():
 
 def fetch_all_sources():
     all_offers = []
-    
-    # 1. Offres scrapées en direct sur les plateformes
-    all_offers.extend(fetch_vitijob_offers())
-    
-    # 2. Mandats CODIR & Headhunters
     all_offers.extend(get_headhunter_and_apec_offers())
+    all_offers.extend(fetch_vitijob_offers())
     
     unique_offers = {}
     for job in all_offers:
-        if job["id"] not in unique_offers:
-            unique_offers[job["id"]] = job
+        key = f"{job['title'].lower()}_{job['location'].lower()}"
+        if key not in unique_offers:
+            unique_offers[key] = job
             
     return list(unique_offers.values())
 
@@ -404,6 +384,9 @@ def generate_docx(offers, filename):
     styles['Heading 2'].font.color.rgb = RGBColor(120, 0, 0)
 
     # Header
+    now = datetime.now()
+    month_name = MONTHS_FR.get(now.month, "Septembre")
+    
     t_p = doc.add_paragraph()
     t_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     t_run = t_p.add_run("SYNTHÈSE DES OPPORTUNITÉS D'ENCADREMENT & DIRECTION")
@@ -413,7 +396,7 @@ def generate_docx(offers, filename):
     
     sub = doc.add_paragraph()
     sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    s_run = sub.add_run(f"Secteur Viticole & Négoce — Bassin Vallée du Rhône\nOffres publiées en {datetime.now().strftime('%B %Y')}")
+    s_run = sub.add_run(f"Secteur Viticole & Négoce — Bassin Vallée du Rhône\nOffres publiées en {month_name} {now.year}")
     s_run.font.size = Pt(11)
     s_run.font.italic = True
     s_run.font.color.rgb = RGBColor(120, 0, 0)
@@ -442,7 +425,7 @@ def generate_docx(offers, filename):
 
     doc.add_paragraph()
 
-    # Section 2 : Matrice récapitulative (5 colonnes)
+    # Section 2 : Matrice récapitulative
     add_numbered_heading(doc, "Matrice Récapitulative des Offres Identifiées", level=1)
     
     table = doc.add_table(rows=1, cols=5)
