@@ -1,0 +1,36 @@
+name: Agent Veille Viticole Quotidien
+
+on:
+  schedule:
+    - cron: '0 5 * * *'  # Exécution tous les jours à 07h00 (heure française d'été)
+  workflow_dispatch:      # Permet le déclenchement manuel en un clic
+
+jobs:
+  run-agent:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write    # Autorise la mise à jour automatique du fichier seen_jobs.json
+
+    steps:
+      - name: Récupération du code source
+        uses: actions/checkout@v3
+
+      - name: Configuration de Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Installation des dépendances
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Exécution de l'agent IA
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+        run: python agent.py
+
+      - name: Sauvegarde de l'état (seen_jobs.json)
+        uses: stefanzweifel/git-auto-commit-action@v4
+        with:
+          commit_message: "MAJ automatique du registre des offres vues [skip ci]"
