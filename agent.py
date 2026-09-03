@@ -40,10 +40,11 @@ def clean_title(title):
     return t.strip()
 
 def normalize_key(text):
-    """Normalise une chaîne pour détecter les doublons stricts (remplace 'et' par '&', supprime la ponctuation)."""
+    """Normalise une chaîne pour fusionner parfaitement les variantes de titre/genre et conjonctions."""
     t = text.lower()
-    t = re.sub(r'\bet\b', '&', t)
-    t = re.sub(r'[^a-z0-9&]', '', t)
+    t = re.sub(r'\([hftrice/\s]+\)', '', t)  # Supprime (trice), (e), (h/f), etc.
+    t = re.sub(r'\bet\b', '&', t)            # Normalise 'et' en '&'
+    t = re.sub(r'[^a-z0-9&]', '', t)        # Ne garde que l'alpha-numérique et &
     return t
 
 def is_management_title(title):
@@ -330,12 +331,12 @@ def get_headhunter_and_apec_offers():
 def fetch_all_sources():
     unique_offers = {}
     
-    # 1. Traitement prioritaire des offres mandats (Cible)
+    # 1. Traitement prioritaire des offres mandats
     for job in get_headhunter_and_apec_offers():
         key = f"{normalize_key(job['title'])}_{normalize_key(job['location'])}"
         unique_offers[key] = job
 
-    # 2. Ajout des nouvelles offres scrapées sans écraser les mandats
+    # 2. Ajout des offres scrapées en éliminant les doublons
     for job in fetch_vitijob_offers():
         key = f"{normalize_key(job['title'])}_{normalize_key(job['location'])}"
         if key not in unique_offers:
@@ -448,7 +449,7 @@ def generate_docx(offers, filename):
 
     doc.add_paragraph()
 
-    # Section 2 : Matrice récapitulative (5 colonnes)
+    # Section 2 : Matrice récapitulative
     add_numbered_heading(doc, "Matrice Récapitulative des Offres Identifiées", level=1)
     
     table = doc.add_table(rows=1, cols=5)
@@ -472,7 +473,6 @@ def generate_docx(offers, filename):
         row_cells = table.add_row().cells
         bg_color = "F7FAFC" if row_idx % 2 == 1 else "FFFFFF"
         
-        # Format propre de l'intitulé pour la matrice
         clean_title_matrice = re.sub(r'\(H/F\)', '', item["title"]).strip()
         
         data = [
@@ -514,7 +514,6 @@ def generate_docx(offers, filename):
                 p.add_run("• Structure : ").bold = True
                 p.add_run(f"{item['structure']}.\n")
                 
-                # Format spécifique pour l'offre hybride JobAffinity
                 if item.get("is_hybride"):
                     p.add_run("• Positionnement Hybride : ").bold = True
                 else:
